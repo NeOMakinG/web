@@ -5,12 +5,14 @@ const stableStringify = require('fast-json-stable-stringify')
 const fs = require('fs')
 const _ = require('lodash')
 const path = require('path')
-const { CID } = require('multiformats/cid')
+const {CID} = require('multiformats/cid')
 const raw = require('multiformats/codecs/raw')
-const { sha256 } = require('multiformats/hashes/sha2')
+const {sha256} = require('multiformats/hashes/sha2')
 const ssri = require('ssri')
 const webpack = require('webpack')
-const { SubresourceIntegrityPlugin } = require('webpack-subresource-integrity')
+const {SubresourceIntegrityPlugin} = require('webpack-subresource-integrity')
+const { paths } = require('react-app-rewired');
+const ForkTsCheckerWebpackPlugin = require('fork-ts-checker-webpack-plugin');
 
 const headers = require('./headers')
 process.env.REACT_APP_CSP_META = headers.cspMeta ?? ''
@@ -19,7 +21,7 @@ process.env.REACT_APP_CSP_META = headers.cspMeta ?? ''
 // pipeline; these need SRI too. This generates SRI attributes for each static
 // asset, exporting them as predictably-named REACT_APP_SRI_FILENAME_EXT
 // environment variables that can be used in the template.
-for (const dirent of fs.readdirSync('./public', { withFileTypes: true })) {
+for (const dirent of fs.readdirSync('./public', {withFileTypes: true})) {
   if (!dirent.isFile()) continue
   const mungedName = dirent.name
     .toUpperCase()
@@ -71,7 +73,8 @@ module.exports = {
         new webpack.ProvidePlugin({
           Buffer: ['buffer/', 'Buffer'],
           process: ['process/browser.js']
-        })
+        }),
+        new ForkTsCheckerWebpackPlugin()
       ]
     })
 
@@ -291,10 +294,31 @@ module.exports = {
     //   b) make it stupidly easy for potential bot authors
     //      to automate site interactions.
     //      (After all, that automation is what cypress tests do)
-    if (isProduction) {
-      const oneOfLoaders = config.module.rules.find(rule => Array.isArray(rule.oneOf))?.oneOf
-      const babelLoader = oneOfLoaders.find(rule => rule.loader?.includes('babel-loader'))
-      babelLoader.options.plugins.push(['react-remove-properties', { properties: ['data-test'] }])
+    for (const { oneOf } of config.module.rules) {
+      if (oneOf) {
+        let babelLoaderIndex = -1;
+        const rules = Object.entries(oneOf);
+        for (const [index, rule] of rules.slice().reverse()) {
+          if (rule.loader && rule.loader.includes(path.sep + 'babel-loader' + path.sep)) {
+            oneOf.splice(index, 1);
+            babelLoaderIndex = index;
+          }
+        }
+        if (~babelLoaderIndex) {
+          oneOf.splice(babelLoaderIndex, 0, {
+            test: /\.(ts|tsx)$/,
+            include: [paths.appSrc],
+            loader: require.resolve('esbuild-loader'),
+            options:  {
+              target: 'chrome96',
+              loader: 'tsx',
+      jsxFactory: "createElement",
+      jsxFragment: "Fragment",
+              banner: "import {createElement, Fragment} from 'react';\n",
+            },
+          });
+        }
+      }
     }
 
     return config
