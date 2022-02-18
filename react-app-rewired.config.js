@@ -11,8 +11,8 @@ const {sha256} = require('multiformats/hashes/sha2')
 const ssri = require('ssri')
 const webpack = require('webpack')
 const {SubresourceIntegrityPlugin} = require('webpack-subresource-integrity')
-const { paths } = require('react-app-rewired');
-const ForkTsCheckerWebpackPlugin = require('fork-ts-checker-webpack-plugin');
+const {paths} = require('react-app-rewired')
+const ForkTsCheckerWebpackPlugin = require('fork-ts-checker-webpack-plugin')
 
 const headers = require('./headers')
 process.env.REACT_APP_CSP_META = headers.cspMeta ?? ''
@@ -73,8 +73,7 @@ module.exports = {
         new webpack.ProvidePlugin({
           Buffer: ['buffer/', 'Buffer'],
           process: ['process/browser.js']
-        }),
-        new ForkTsCheckerWebpackPlugin()
+        })
       ]
     })
 
@@ -294,31 +293,45 @@ module.exports = {
     //   b) make it stupidly easy for potential bot authors
     //      to automate site interactions.
     //      (After all, that automation is what cypress tests do)
-    for (const { oneOf } of config.module.rules) {
-      if (oneOf) {
-        let babelLoaderIndex = -1;
-        const rules = Object.entries(oneOf);
-        for (const [index, rule] of rules.slice().reverse()) {
-          if (rule.loader && rule.loader.includes(path.sep + 'babel-loader' + path.sep)) {
-            oneOf.splice(index, 1);
-            babelLoaderIndex = index;
+    if (isProduction) {
+      const oneOfLoaders = config.module.rules.find(rule => Array.isArray(rule.oneOf))?.oneOf
+      const babelLoader = oneOfLoaders.find(rule => rule.loader?.includes('babel-loader'))
+      babelLoader.options.plugins.push(['react-remove-properties', {properties: ['data-test']}])
+    } else {
+      // Find babel-loader and replace it by esbuild loader only on development mode
+      for (const {oneOf} of config.module.rules) {
+        if (oneOf) {
+          let babelLoaderIndex = -1
+          const rules = Object.entries(oneOf)
+          for (const [index, rule] of rules.slice().reverse()) {
+            if (rule.loader && rule.loader.includes(path.sep + 'babel-loader' + path.sep)) {
+              oneOf.splice(index, 1)
+              babelLoaderIndex = index
+            }
+          }
+          if (~babelLoaderIndex) {
+            oneOf.splice(babelLoaderIndex, 0, {
+              test: /\.(js|ts|tsx)$/,
+              include: [paths.appSrc],
+              loader: require.resolve('esbuild-loader'),
+              options: {
+                // ESBuild doesn't support es2015
+                target: 'es2018',
+                loader: 'tsx',
+                jsxFactory: 'createElement',
+                jsxFragment: 'Fragment',
+                banner: "import {createElement, Fragment} from 'react';\n"
+              }
+            })
           }
         }
-        if (~babelLoaderIndex) {
-          oneOf.splice(babelLoaderIndex, 0, {
-            test: /\.(ts|tsx)$/,
-            include: [paths.appSrc],
-            loader: require.resolve('esbuild-loader'),
-            options:  {
-              target: 'chrome96',
-              loader: 'tsx',
-      jsxFactory: "createElement",
-      jsxFragment: "Fragment",
-              banner: "import {createElement, Fragment} from 'react';\n",
-            },
-          });
-        }
       }
+
+      // We wants to include TS typecheck because esbuild doesn't do it
+      // It's performed after the build, so the website is accessible before the typecheck
+      _.merge(config, {
+        plugins: [...config.plugins, new ForkTsCheckerWebpackPlugin()]
+      })
     }
 
     return config
